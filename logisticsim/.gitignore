@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+
+# Outputs (keep examples in output/ directory)
+*.png
+*.csv
+!output/*.png
+!output/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
