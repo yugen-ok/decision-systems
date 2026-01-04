@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 
 from EmpiricalLogistics import (
     CapacityCalibrator,
-    PortSimulator,
+    NodeSimulator,
     SimplePolicy,
     compute_validation_metrics,
 )
@@ -178,7 +178,7 @@ def main():
         params = calibrator.calibrate()
 
         # 4. Initialize simulator at eval boundary
-        sim = PortSimulator(params)
+        sim = NodeSimulator(params)
         sim.reset(backlog_init=ts_train.iloc[-1]["backlog"])
 
         predicted = []

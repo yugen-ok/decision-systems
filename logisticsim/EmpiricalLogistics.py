@@ -1,12 +1,14 @@
 """
-Empirical Port Logistics Simulation
+Empirical Logistics Simulation
 
-Extracts capacity dynamics from actual port data.
-Each port is modeled as an isolated node that:
+Extracts capacity dynamics from actual data.
+Each node is modeled as an isolated unit that:
 - Receives arriving workload (arriving_*_tons)
 - Manages capacity to process workload
 - Accumulates backlog when capacity insufficient
 - Makes mobilization decisions to adjust capacity
+
+(Note: mobilization corresponds to "orders" in many logistics systems)
 
 Key dynamics:
 - Capacity = C_base + mobilized - γ * backlog (congestion reduces capacity)
@@ -149,9 +151,9 @@ class CapacityCalibrator:
         return L
 
 
-class PortSimulator:
+class NodeSimulator:
     """
-    Single-port capacity mobilization simulator
+    Single-node capacity flow simulator
 
     State: backlog, capacity, pipeline (delayed mobilization orders)
     Action: mobilization order (how much capacity to add)

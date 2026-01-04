@@ -2,7 +2,7 @@
 
 ## What this is
 
-**EmpiricalLogistics** is a small, intentionally minimal framework for modeling and testing **flow congestion dynamics** in large-scale operational systems (ports, factories, logistics hubs, etc.) under **delayed and partial information**.
+**EmpiricalLogistics** is a small, intentionally minimal framework for modeling and testing **flow dynamics** in large-scale operational systems (ports, factories, logistics hubs, etc.) under **delayed and partial information**.
 
 It is **not** a production system, a forecasting engine, or an optimization solution.
 
@@ -45,9 +45,6 @@ It focuses only on the **structural feedback** between backlog and capacity.
 ## What `EmpiricalLogistics.py` contains
 
 The module is organized as a reusable library:
-
-- **PortDataLoader**  
-  Loads and extracts per-port, per-cargo time series.
 
 - **CapacityCalibrator**  
   Empirically estimates parameters (baseline capacity, congestion sensitivity, delays) from historical data only.
@@ -123,11 +120,12 @@ Its role is earlier in the modeling stack:
 
 ---
 
-## Why this matters
+## Impact
 
 If the signal were zero or unstable, the idea should be discarded.
 
 Instead, the experiments show:
+
 - consistent non-zero signal
 - robustness across datasets
 - improvement with more coverage
@@ -138,9 +136,6 @@ That validates the *logic* and justifies further refinement if desired.
 
 ## Summary
 
-- EmpiricalLogistics is a **correct minimal skeleton** for modeling flow congestion
-- Its experiments are designed to **validate logic, not optimize performance**
-- The results confirm the mechanism is **real but incomplete**
-- Any extensions add state; they do not fix a broken foundation
-
-That is the intended outcome of this project.
+- EmpiricalLogistics is a minimal skeleton for modeling flow
+- The experiments are designed to validate logic, not optimize performance
+- The results confirm the mechanism is real (though incomplete)
