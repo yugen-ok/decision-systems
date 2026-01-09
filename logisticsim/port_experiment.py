@@ -12,7 +12,7 @@ Pipeline:
 Obtain data here:
 https://portwatch.imf.org/datasets/959214444157458aad969389b3ebe1a0/about
 
-Split to train and eval and place it in TRAIN_PATH and EVAL_PATH.
+Split to train and eval and place it in TRAIN_PATH and EVAL_PATH using split.py.
 
 """
 

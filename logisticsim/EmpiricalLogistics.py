@@ -218,11 +218,19 @@ class NodeSimulator:
         C_max = self.params['C_max']
 
         self.capacity = C_base + mobilized_today - gamma * self.backlog
+
+        # Consider trying this option:
+        #self.capacity = self.capacity + mobilized_today - gamma * self.backlog
+
+
         self.capacity = np.clip(self.capacity, 0, C_max)
 
         # Process workload
         available_work = self.backlog + arriving_tons
         processed = min(available_work, self.capacity)
+
+        # When decay is 1, capacity represnts a physical quantity that is exhausted after reuse
+        self.capacity -= self.params.get('decay_rate', 0) * processed
 
         # Update backlog
         self.backlog = max(0, available_work - processed)

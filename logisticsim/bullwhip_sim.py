@@ -1,6 +1,12 @@
 """
 bullwhip_sim_corrected.py
 
+General idea:
+d_hat = (1 - ORDER_ALPHA) * d_hat + ORDER_ALPHA * D_t
+O_t = Dhat_t + GAMMA(T + L * Dhat_t - (C_t + Pipeline_t - Backlog_t) )
+
+(C_t + Pipeline_t - Backlog_t) is also called Position_t
+
 Corrected + instrumented 2-node "beer-game-ish" simulation built on EmpiricalLogistics.NodeSimulator.
 
 Key fixes vs your previous sim:
