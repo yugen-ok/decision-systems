@@ -2,8 +2,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
+import os
 
-from empiricalogistics.CapacitySystem import CapacitySystem
+from CapacitySystem import CapacitySystem
 
 load_dotenv()
 
@@ -166,3 +167,98 @@ print(episodes_df["peak_backlog"].describe())
 
 print("\nBacklog half-life (days):")
 print(episodes_df["half_life"].replace(np.inf, np.nan).describe())
+
+
+
+# ----------------------------
+# GLOBAL SCAN
+# ----------------------------
+
+all_episodes = []
+
+for portid, port_df in train_df.groupby("portid"):
+    if len(port_df) <= K + 5:
+        continue
+
+    port_df = port_df.reset_index(drop=True)
+
+    mean_processed = port_df["processed"].mean()
+    init_inventory = (best_config["delay"] + best_config["inventory_horizon"]) * mean_processed
+
+    inv = InventorySystem(
+        delay=int(best_config["delay"]),
+        init_inventory=init_inventory,
+        inventory_horizon=int(best_config["inventory_horizon"]),
+        alpha=best_config["alpha"],
+        gamma=best_config["gamma"],
+        clearance_factor=best_config["clearance_factor"],
+    )
+
+    # warmup
+    for r in port_df.iloc[:K].itertuples():
+        inv.step(
+            demand=r.demand * best_config["clearance_factor"],
+            processed=r.processed,
+        )
+
+    # simulate
+    for r in port_df.iloc[K:].itertuples():
+        inv.step(demand=r.demand * best_config["clearance_factor"])
+
+    backlog = np.asarray(inv.history["backlog"])
+    demand  = np.asarray(inv.history["demand"])
+
+    episodes = find_congestion_episodes(backlog)
+
+    for (start, end) in episodes:
+        duration = end - start
+        peak_backlog = backlog[start:end].max()
+        hl = backlog_half_life(backlog, start)
+        spike_demand = demand[start] / (demand[start-1] + 1e-6) if start > 0 else np.nan
+
+        all_episodes.append({
+            "portid": portid,
+            "start": start,
+            "duration": duration,
+            "peak_backlog": peak_backlog,
+            "half_life": hl,
+            "demand_spike_ratio": spike_demand,
+        })
+
+episodes_df = pd.DataFrame(all_episodes)
+
+# ----------------------------
+# SUMMARY
+# ----------------------------
+
+print("\n=== GLOBAL CONGESTION AUDIT ===")
+
+print("\nTotal congestion episodes:", len(episodes_df))
+print("Ports with ≥1 congestion episode:", episodes_df.portid.nunique())
+
+print("\nEpisode duration (days):")
+print(episodes_df.duration.describe())
+
+print("\nBacklog half-life (days):")
+print(episodes_df.half_life.replace(np.inf, np.nan).describe())
+
+print("\nPeak backlog:")
+print(episodes_df.peak_backlog.describe())
+
+print("\nDemand spike ratio (demand_t / demand_{t-1}):")
+print(episodes_df.demand_spike_ratio.describe())
+
+# ----------------------------
+# SHAPE CHECK: do they look like the inspected one?
+# ----------------------------
+
+print("\n=== SHAPE CHECK ===")
+
+print("Fraction with duration ≤ 3 days:",
+      np.mean(episodes_df.duration <= 3))
+
+print("Fraction with half-life ≤ 2 days:",
+      np.mean(episodes_df.half_life <= 2))
+
+print("Fraction triggered by strong spike (≥2×):",
+      np.mean(episodes_df.demand_spike_ratio >= 2))
