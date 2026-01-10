@@ -1,6 +1,7 @@
 import math
 import random
 import itertools
+import numpy as np
 
 from InventorySystem import InventorySystem
 
@@ -26,9 +27,9 @@ INIT_INV = 100
 RANDOM_SEED = 42
 CLEARANCE_FACTOR = 1.1
 
-ALPHAS = [0.002, 0.005, 0.01, 0.02, 0.05]
-GAMMAS = [0.05, 0.1, 0.25, 0.5, 1.0]
-INVENTORY_HORIZONS = [50]
+ALPHAS = np.logspace(-3, -1.3, 12)     # ~0.001 → ~0.05
+GAMMAS = np.logspace(-2, 0, 12)        # 0.01 → 1.0
+INVENTORY_HORIZONS = [1.3]
 
 
 
@@ -161,3 +162,21 @@ for r in results[:5]:
     for m in ["bullwhip", "inv_in_band"]:
         print(f"  {m}: {round(r['metrics'][m], 3)}")
     print()
+
+
+# -----------------------
+# BULLWHIP-ONLY RANKING
+# -----------------------
+
+bullwhip_ranked = sorted(results, key=lambda r: r["metrics"]["bullwhip"])
+
+print("\nTOP PARAMETER SETTINGS (lowest bullwhip):\n")
+
+for r in bullwhip_ranked[-5:]:
+    print(
+        f"alpha={round(r['alpha'], 5)}, "
+        f"gamma={round(r['gamma'], 5)}, "
+        f"ih={r['ih']}, "
+        f"bullwhip={round(r['metrics']['bullwhip'], 3)}, "
+        f"score={round(r['score'], 3)}"
+    )

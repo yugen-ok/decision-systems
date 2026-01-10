@@ -1,10 +1,40 @@
 """
 Example setups:
 
-no_bw = InventorySystem(delay=5, alpha=0.01, gamma=0.25, target_inventory=80, init_inventory=80)
-small_bw = InventorySystem(delay=3, alpha=0.05, gamma=0.25, target_inventory=80, init_inventory=80)
-mild_bw = InventorySystem(delay=6, init_inventory=50, target_inventory=100, alpha=0.5, gamma=2.0)
-strong_bw = InventorySystem(delay=10, init_inventory=50, target_inventory=100, alpha=0.9, gamma=5.0)
+CLEARANCE_FACTOR = 1.1
+
+# Low bullwhip, high inv_in_band
+INVENTORY_HORIZON = 1.3
+ALPHA = .05
+GAMMA = .25
+
+
+# Bullwhip
+CLEARANCE_FACTOR = np.inf
+INVENTORY_HORIZON = 3
+ALPHA = 1
+GAMMA = .25
+
+# Congestion (backlog creep)
+CLEARANCE_FACTOR = .9
+INVENTORY_HORIZON = 2
+ALPHA = 0.2
+GAMMA = 0.4
+
+
+# Congestion + Bullwhip:
+CLEARANCE_FACTOR = .9
+INVENTORY_HORIZON = 3
+ALPHA = 1
+GAMMA = 0.8
+
+
+# Backlog spikes:
+CLEARANCE_FACTOR = 1.05
+INVENTORY_HORIZON = 2
+ALPHA = 0.1
+GAMMA = 0.4
+
 
 """
 import math
@@ -18,17 +48,13 @@ METRICS = ["bullwhip", "backlog_mean", "backlog_std", "backlog_spikes", "inv_mad
 
 RANDOM_SEED = 42
 T = 1000
-
 DELAY = 5
 INIT_INV = 100
-CLEARANCE_FACTOR = 1.1
 
-INVENTORY_HORIZON = 100
-K = 10
-BAND_FRACTION = .05
-
-ALPHA = .05
-GAMMA = .25
+CLEARANCE_FACTOR = .99
+INVENTORY_HORIZON = 3
+ALPHA = 1
+GAMMA = 0.7
 
 BURN_IN = 50   # discard first steps for analysis
 PLOT = True
@@ -36,8 +62,8 @@ PLOT = True
 rng = random.Random(RANDOM_SEED)
 
 # Simple sim of daily demand
-def demand_fn(t, *, base_level=20, daily_amp=6, weekly_amp=4,
-              noise_std=2.0, trend=0.1, shock_prob=0.02, shock_scale=15,
+def demand_fn(t, *, base_level=INIT_INV, daily_amp=6, weekly_amp=4,
+              noise_std=2.0, trend=0.1, shock_prob=0.04, shock_scale=15,
               seed=42):
     """
     Realistic store demand generator.
@@ -54,7 +80,8 @@ def demand_fn(t, *, base_level=20, daily_amp=6, weekly_amp=4,
     noise = rng.gauss(0, noise_std)
 
     # rare demand shocks (promotions, weather, events)
-    shock = shock_scale if rng.random() < shock_prob else 0
+    sigma_est = noise_std + 0.5 * daily_amp + 0.3 * weekly_amp
+    shock = sigma_est * shock_scale if rng.random() < shock_prob else 0
 
     demand = base_level + daily_cycle + weekly_cycle + trend_component + noise + shock
 

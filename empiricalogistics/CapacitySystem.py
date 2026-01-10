@@ -2,23 +2,24 @@ import numpy as np
 from collections import deque
 from matplotlib import pyplot as plt
 
-class InventorySystem:
+class CapacitySystem:
     def __init__(
         self,
         *,
         delay,
         init_inventory,
-        clearance_factor,
         inventory_horizon,
         alpha,
         gamma,
+        clearance_factor,
     ):
-        self.clearance_factor = clearance_factor
         self.delay = delay
         self.inventory_horizon = inventory_horizon
 
         self.alpha = alpha
         self.gamma = gamma
+
+        self.clearance_factor = clearance_factor
 
         # state
         self.inventory = init_inventory
@@ -47,17 +48,23 @@ class InventorySystem:
     # ONE STEP
     # -----------------------
 
-    def step(self, demand):
+    def step(self, demand, processed=None):
+        """
+        demand    : observed demand (always required)
+        processed : observed processed volume (optional)
+                    if None → model predicts processed internally
+        Returns: processed_used
+        """
+
         # --- update demand forecast (EWMA) ---
-        # --- update demand forecast (EWMA), with warm-start ---
         if len(self.history["demand"]) == 0:
             self.demand_hat = demand
         else:
             self.demand_hat = (1 - self.alpha) * self.demand_hat + self.alpha * demand
 
+        # --- target capacity buffer ---
         target_inventory_position = (
-                self.delay * self.demand_hat
-                + self.inventory_horizon * self.demand_hat
+                (self.delay + self.inventory_horizon) * self.demand_hat
         )
 
         # --- inventory position BEFORE ordering ---
@@ -67,25 +74,35 @@ class InventorySystem:
                 - self.backlog
         )
 
-        # --- order decision (P + damping) ---
+        # --- capacity adjustment decision ---
         order = self.demand_hat + self.gamma * (target_inventory_position - inventory_position)
         order = max(0.0, order)
 
-        # --- pipeline update ---
-        # --- pipeline update ---
+        # --- delayed capacity adjustment ---
         arrivals = self.pipeline.popleft()
         self.pipeline.append(order)
 
-        # --- fulfill demand (FLOW-CONSERVING) ---
+        # --- flow constraints ---
         max_clear = self.clearance_factor * max(self.demand_hat, 1e-6)
 
         total_demand = demand + self.backlog
         total_supply = self.inventory + arrivals
 
-        fulfilled = min(total_supply, total_demand, max_clear)
+        # --------------------------------------------------
+        # PROCESSED: observed if given, else predicted
+        # --------------------------------------------------
+        if processed is None:
+            processed_used = min(total_supply, total_demand, max_clear)
+        else:
+            processed_used = min(processed, total_supply, total_demand)
 
-        self.backlog = total_demand - fulfilled
-        self.inventory = total_supply - fulfilled
+        # --- state update ---
+        self.backlog = total_demand - processed_used
+
+        # This is the core line that differentiates work capacity with daily regeneration (which is how it works for ports)
+        # from physical stock inventory
+        # (which is what we have in the vanilla InventorySystem class):
+        #self.inventory = total_supply - processed_used
 
         # --- record history ---
         self.history["inventory"].append(self.inventory)
@@ -95,6 +112,8 @@ class InventorySystem:
         self.history["arrivals"].append(arrivals)
         self.history["target"].append(target_inventory_position)
         self.history["inventory_position"].append(inventory_position)
+
+        return processed_used
 
     # -----------------------
     # ANALYSIS
@@ -109,7 +128,6 @@ class InventorySystem:
         arrivals = np.array(self.history["arrivals"][burn_in:])
         inventory_position = np.array(self.history["inventory_position"][burn_in:])
 
-        print(self.history)
         # bullwhip
         demand_var = np.var(demand)
         orders_var = np.var(orders)

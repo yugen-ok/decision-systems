@@ -2,7 +2,7 @@
 
 ## What this is
 
-**EmpiricalLogistics** is a small, intentionally minimal framework for modeling and testing **flow dynamics** in large-scale operational systems (ports, factories, logistics hubs, etc.) under **delayed and partial information**.
+This is a small, intentionally minimal framework for modeling and testing **flow dynamics** in large-scale operational systems (ports, factories, logistics hubs, etc.) under **delayed and partial information**.
 
 It is **not** a production system, a forecasting engine, or an optimization solution.
 
