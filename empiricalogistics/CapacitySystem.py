@@ -11,7 +11,7 @@ class CapacitySystem:
         inventory_horizon,
         alpha,
         gamma,
-        clearance_factor,
+        clearance_factor
     ):
         self.delay = delay
         self.inventory_horizon = inventory_horizon
@@ -102,7 +102,7 @@ class CapacitySystem:
         # This is the core line that differentiates work capacity with daily regeneration (which is how it works for ports)
         # from physical stock inventory
         # (which is what we have in the vanilla InventorySystem class):
-        #self.inventory = total_supply - processed_used
+        self.inventory = total_supply # We remove this: - processed_used
 
         # --- record history ---
         self.history["inventory"].append(self.inventory)
@@ -112,6 +112,7 @@ class CapacitySystem:
         self.history["arrivals"].append(arrivals)
         self.history["target"].append(target_inventory_position)
         self.history["inventory_position"].append(inventory_position)
+        self.history["max_clear"].append(max_clear)
 
         return processed_used
 

@@ -3,3 +3,4 @@
 ports/
 **/recycle_bin/
 **/.env
+*/.claude

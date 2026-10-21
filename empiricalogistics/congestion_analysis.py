@@ -1,264 +1,396 @@
+import os
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from dotenv import load_dotenv
-import os
+from scipy.stats import mannwhitneyu
 
-from CapacitySystem import CapacitySystem
-
+# ----------------------------
+# LOAD
+# ----------------------------
 load_dotenv()
-
-# ----------------------------
-# CONFIG
-# ----------------------------
-
-K = 30
-WINDOW = 7        # days before / after congestion
-MAX_PLOTS = 5     # how many episodes to visualize
-
-best_config = {
-    "delay": 4,
-    "inventory_horizon": 8,
-    "alpha": 0.1,
-    "gamma": 0.047863,
-    "clearance_factor": 12624.299878,
-}
-
-
 TRAIN_PATH = os.getenv("TRAIN_PATH")
-train_df = pd.read_csv(TRAIN_PATH)
+df = pd.read_csv(TRAIN_PATH)
+
+df = df.sort_values(["portid"]).reset_index(drop=True)
+
+# ----------------------------
+# DEMAND UNIT (one-time scaling)
+# ----------------------------
+# Convert demand (portcalls) into processed-units using a robust global factor.
+mask = df["demand"] > 0
+DEMAND_UNIT = (df.loc[mask, "processed"] / df.loc[mask, "demand"]).median()
+
+print("DEMAND_UNIT =", DEMAND_UNIT)
 
 # ----------------------------
 # HELPERS
 # ----------------------------
-
-def find_congestion_episodes(backlog):
-    """Return list of (start, end) indices where backlog > 0."""
-    episodes = []
-    in_ep = False
-    for i, b in enumerate(backlog):
-        if b > 0 and not in_ep:
+def find_overload_runs(demand_scaled, processed):
+    """
+    Returns list of (start, length) where demand_scaled > processed
+    on consecutive days.
+    """
+    runs = []
+    i = 0
+    n = len(demand_scaled)
+    while i < n:
+        if demand_scaled[i] > processed[i]:
             start = i
-            in_ep = True
-        elif b == 0 and in_ep:
-            episodes.append((start, i))
-            in_ep = False
-    if in_ep:
-        episodes.append((start, len(backlog)))
-    return episodes
+            while i < n and demand_scaled[i] > processed[i]:
+                i += 1
+            runs.append((start, i - start))
+        else:
+            i += 1
+    return runs
 
+def backlog_recovery_time(backlog, start, eps=0.1):
+    """
+    Time until backlog recovers to within eps of its pre-overload baseline.
+    """
+    if start == 0:
+        base = 0.0
+    else:
+        base = backlog[start - 1]
 
-def backlog_half_life(backlog, start):
-    """Days until backlog halves."""
-    b0 = backlog[start]
-    if b0 <= 0:
-        return 0
-    for i in range(start + 1, len(backlog)):
-        if backlog[i] <= 0.5 * b0:
-            return i - start
+    peak = backlog[start:].max()
+
+    # recovery threshold
+    thresh = base + eps * max(1.0, peak - base)
+
+    for t in range(start + 1, len(backlog)):
+        if backlog[t] <= thresh:
+            return t - start
+
     return np.inf
 
+def compute_backlog(demand_scaled, processed):
+    """
+    backlog[t] = max(0, backlog[t-1] + demand_scaled[t] - processed[t])
+    """
+    n = len(demand_scaled)
+    backlog = np.zeros(n, dtype=float)
+    for t in range(n):
+        prev = backlog[t-1] if t > 0 else 0.0
+        backlog[t] = max(0.0, prev + demand_scaled[t] - processed[t])
+    return backlog
 
 # ----------------------------
-# MAIN ANALYSIS
+# MAIN SCAN
 # ----------------------------
+records = []
 
-episode_stats = []
-plot_count = 0
-
-for portid, port_df in train_df.groupby("portid"):
-    if len(port_df) <= K + 5:
-        continue
-
+for portid, port_df in df.groupby("portid"):
     port_df = port_df.reset_index(drop=True)
 
-    mean_processed = port_df["processed"].mean()
-    init_inventory = (best_config["delay"] + best_config["inventory_horizon"]) * mean_processed
+    demand_scaled = (port_df["demand"].to_numpy(dtype=float) * DEMAND_UNIT)
+    processed     = port_df["processed"].to_numpy(dtype=float)
 
-    inv = CapacitySystem(
-        delay=int(best_config["delay"]),
-        init_inventory=init_inventory,
-        inventory_horizon=int(best_config["inventory_horizon"]),
-        alpha=best_config["alpha"],
-        gamma=best_config["gamma"],
-        clearance_factor=best_config["clearance_factor"],
-    )
+    backlog = compute_backlog(demand_scaled, processed)
 
-    # warmup
-    for r in port_df.iloc[:K].itertuples():
-        inv.step(demand=r.demand * best_config["clearance_factor"],
-                 processed=r.processed)
+    runs = find_overload_runs(demand_scaled, processed)
 
-    # simulate
-    for r in port_df.iloc[K:].itertuples():
-        inv.step(demand=r.demand * best_config["clearance_factor"])
+    for start, length in runs:
+        # peak backlog AFTER the run starts (you can change window if you want)
+        peak_backlog = float(backlog[start:].max())
+        clear_time = backlog_recovery_time(backlog, start, eps=0.1)
 
-    h = inv.history
-    backlog = np.array(h["backlog"])
-    demand = np.array(h["demand"])
-    inventory = np.array(h["inventory"])
-    order = np.array(h["order"])
-    target = np.array(h["target"])
-
-    episodes = find_congestion_episodes(backlog)
-
-    for (start, end) in episodes:
-        duration = end - start
-        peak_backlog = backlog[start:end].max()
-        hl = backlog_half_life(backlog, start)
-
-        episode_stats.append({
+        records.append({
             "portid": portid,
-            "start": start,
-            "end": end,
-            "duration": duration,
+            "start": int(start),  # <-- ADD THIS
+            "overload_run_length": int(length),
             "peak_backlog": peak_backlog,
-            "half_life": hl,
+            "clear_time": clear_time,
         })
 
-        # ----------------------------
-        # OPTIONAL PLOTTING
-        # ----------------------------
-        if plot_count < MAX_PLOTS:
-            lo = max(0, start - WINDOW)
-            hi = min(len(backlog), end + WINDOW)
-            t = np.arange(lo, hi)
-
-            plt.figure(figsize=(12, 8))
-
-            plt.subplot(3, 1, 1)
-            plt.plot(t, demand[lo:hi], label="Demand")
-            plt.plot(t, inventory[lo:hi], label="Capacity")
-            plt.axvspan(start, end, color="red", alpha=0.2)
-            plt.legend()
-            plt.title(f"Port {portid} – Demand vs Capacity")
-
-            plt.subplot(3, 1, 2)
-            plt.plot(t, backlog[lo:hi], label="Backlog")
-            plt.axvspan(start, end, color="red", alpha=0.2)
-            plt.legend()
-            plt.title("Backlog")
-
-            plt.subplot(3, 1, 3)
-            plt.plot(t, order[lo:hi], label="Order")
-            plt.plot(t, target[lo:hi], linestyle="--", label="Target")
-            plt.axvspan(start, end, color="red", alpha=0.2)
-            plt.legend()
-            plt.title("Control Response")
-
-            plt.tight_layout()
-            plt.show()
-
-            plot_count += 1
-
-# ----------------------------
-# SUMMARY STATISTICS
-# ----------------------------
-
-episodes_df = pd.DataFrame(episode_stats)
-
-print("\n=== CONGESTION SUMMARY ===")
-print("Number of congestion episodes:", len(episodes_df))
-print("\nDuration (days):")
-print(episodes_df["duration"].describe())
-
-print("\nPeak backlog:")
-print(episodes_df["peak_backlog"].describe())
-
-print("\nBacklog half-life (days):")
-print(episodes_df["half_life"].replace(np.inf, np.nan).describe())
+runs_df = pd.DataFrame(records)
 
 
+###################################
 
-# ----------------------------
-# GLOBAL SCAN
-# ----------------------------
+# Last exp:
+# Is backlog already high before a never-recovered event
 
-all_episodes = []
+# ============================================================
+# PRE-SPIKE BACKLOG TEST (THE RIGHT 1-D EXPERIMENT)
+# ============================================================
 
-for portid, port_df in train_df.groupby("portid"):
-    if len(port_df) <= K + 5:
-        continue
+K = 7  # days before run start
 
+rows = []
+
+for portid, port_df in df.groupby("portid"):
     port_df = port_df.reset_index(drop=True)
 
-    mean_processed = port_df["processed"].mean()
-    init_inventory = (best_config["delay"] + best_config["inventory_horizon"]) * mean_processed
+    demand_scaled = port_df["demand"].to_numpy(float) * DEMAND_UNIT
+    processed     = port_df["processed"].to_numpy(float)
 
-    inv = InventorySystem(
-        delay=int(best_config["delay"]),
-        init_inventory=init_inventory,
-        inventory_horizon=int(best_config["inventory_horizon"]),
-        alpha=best_config["alpha"],
-        gamma=best_config["gamma"],
-        clearance_factor=best_config["clearance_factor"],
-    )
+    backlog = compute_backlog(demand_scaled, processed)
 
-    # warmup
-    for r in port_df.iloc[:K].itertuples():
-        inv.step(
-            demand=r.demand * best_config["clearance_factor"],
-            processed=r.processed,
-        )
+    # runs for this port
+    port_runs = runs_df[runs_df.portid == portid]
 
-    # simulate
-    for r in port_df.iloc[K:].itertuples():
-        inv.step(demand=r.demand * best_config["clearance_factor"])
+    for _, r in port_runs.iterrows():
+        t0 = int(r.start)
+        if t0 <= 0:
+            continue
 
-    backlog = np.asarray(inv.history["backlog"])
-    demand  = np.asarray(inv.history["demand"])
+        # backlog just before / shortly before the run
+        B_pre = float(backlog[max(0, t0-K):t0].max())
 
-    episodes = find_congestion_episodes(backlog)
-
-    for (start, end) in episodes:
-        duration = end - start
-        peak_backlog = backlog[start:end].max()
-        hl = backlog_half_life(backlog, start)
-        spike_demand = demand[start] / (demand[start-1] + 1e-6) if start > 0 else np.nan
-
-        all_episodes.append({
-            "portid": portid,
-            "start": start,
-            "duration": duration,
-            "peak_backlog": peak_backlog,
-            "half_life": hl,
-            "demand_spike_ratio": spike_demand,
+        rows.append({
+            "B_pre": B_pre,
+            "never": ~np.isfinite(r.clear_time),
         })
 
-episodes_df = pd.DataFrame(all_episodes)
+
+pre_df = pd.DataFrame(rows)
+
+print("Total runs:", len(pre_df))
+print("Never runs:", int(pre_df.never.sum()))
+print("Never rate:", float(pre_df.never.mean()))
 
 # ----------------------------
-# SUMMARY
+# BINNING (P(never | B_pre))
 # ----------------------------
+pre_df["bin"] = pd.qcut(pre_df["B_pre"], q=20, duplicates="drop")
 
-print("\n=== GLOBAL CONGESTION AUDIT ===")
+bin_table = (
+    pre_df.groupby("bin")
+    .agg(
+        n=("never", "size"),
+        never_rate=("never", "mean"),
+        Bpre_min=("B_pre", "min"),
+        Bpre_med=("B_pre", "median"),
+        Bpre_max=("B_pre", "max"),
+    )
+    .reset_index(drop=True)
+)
 
-print("\nTotal congestion episodes:", len(episodes_df))
-print("Ports with ≥1 congestion episode:", episodes_df.portid.nunique())
+print("\n=== P(never | pre-spike backlog) ===")
+print(bin_table)
 
-print("\nEpisode duration (days):")
-print(episodes_df.duration.describe())
+# monotonicity sanity check
+rates = bin_table["never_rate"].to_numpy()
+print("\nDownward steps in never_rate:",
+      int(np.sum(np.diff(rates) < 0)),
+      "out of", len(rates)-1)
 
-print("\nBacklog half-life (days):")
-print(episodes_df.half_life.replace(np.inf, np.nan).describe())
+# ----------------------------
+# 1-D SEPARABILITY (AUC)
+# ----------------------------
+x = pre_df["B_pre"].to_numpy()
+y = pre_df["never"].astype(int).to_numpy()
+
+pos = x[y == 1]
+neg = x[y == 0]
+
+# rank-based AUC (no sklearn)
+scores = np.concatenate([pos, neg])
+labels = np.concatenate([np.ones(len(pos)), np.zeros(len(neg))])
+
+order = np.argsort(scores)
+ranks = np.empty_like(order, float)
+ranks[order] = np.arange(1, len(scores)+1)
+
+i = 0
+s = scores[order]
+while i < len(s):
+    j = i
+    while j+1 < len(s) and s[j+1] == s[i]:
+        j += 1
+    if j > i:
+        ranks[order[i:j+1]] = (i+1 + j+1) / 2
+    i = j+1
+
+R_pos = ranks[labels == 1].sum()
+auc = (R_pos - len(pos)*(len(pos)+1)/2) / (len(pos)*len(neg))
+
+print("\nROC AUC using ONLY pre-spike backlog:", float(auc))
+# .68 -> anser is yes
+# If you randomly pick one never-recover run and one recovered run,
+# 68% of the time the never-recover run had higher pre-backlog.
+
+
+
+
+
+
+
+
+#####################################
+
+
+runs_df["never_recovered"] = ~np.isfinite(runs_df["clear_time"])
+
+# First we check whether there's a difference between the ones that recovered and the ones that didnt:
+
+# keep only valid numeric rows
+runs_df = runs_df[
+    runs_df["overload_run_length"].notna() &
+    runs_df["peak_backlog"].notna()
+]
+
+rec = runs_df[~runs_df["never_recovered"]]
+nev = runs_df[runs_df["never_recovered"]]
+
+print(f"Recovered runs: {len(rec)}")
+print(f"Never-recovered runs: {len(nev)}")
+
+# guard against degenerate cases
+def safe_mwu(x, y):
+    if len(x) == 0 or len(y) == 0:
+        return None, None
+    return mannwhitneyu(x, y, alternative="two-sided")
+
+# ----------------------------
+# 1. RUN LENGTH TEST
+# ----------------------------
+u_len, p_len = safe_mwu(
+    rec["overload_run_length"],
+    nev["overload_run_length"]
+)
+
+# ----------------------------
+# 2. PEAK BACKLOG TEST
+# ----------------------------
+u_back, p_back = safe_mwu(
+    rec["peak_backlog"],
+    nev["peak_backlog"]
+)
+
+# ----------------------------
+# EFFECT SIZE (rank-biserial)
+# ----------------------------
+def rank_biserial(u, n1, n2):
+    return 1 - (2*u) / (n1*n2)
+
+rb_len  = rank_biserial(u_len,  len(rec), len(nev))  if u_len  is not None else None
+rb_back = rank_biserial(u_back, len(rec), len(nev))  if u_back is not None else None
+
+# ----------------------------
+# RESULTS
+# ----------------------------
+print("\n=== STATISTICAL DIFFERENCE TEST ===")
+
+print("\nOverload run length:")
+print("  p-value:", p_len)
+print("  rank-biserial effect:", rb_len)
+print("  medians:", rec["overload_run_length"].median(),
+      "(recovered) vs", nev["overload_run_length"].median(), "(never)")
 
 print("\nPeak backlog:")
-print(episodes_df.peak_backlog.describe())
+print("  p-value:", p_back)
+print("  rank-biserial effect:", rb_back)
+print("  medians:", rec["peak_backlog"].median(),
+      "(recovered) vs", nev["peak_backlog"].median(), "(never)")
 
-print("\nDemand spike ratio (demand_t / demand_{t-1}):")
-print(episodes_df.demand_spike_ratio.describe())
+
+
+# Now we check recovery trends for rec:
+
+
+summary = (
+    rec
+    .groupby("overload_run_length")
+    .agg(
+        mean_peak_backlog=("peak_backlog", "mean"),
+        median_peak_backlog=("peak_backlog", "median"),
+        mean_clear_time=("clear_time", "mean"),
+        median_clear_time=("clear_time", "median"),
+        count=("clear_time", "count"),
+    )
+    .reset_index()
+)
+
+print("\n=== OVERLOAD RUN IMPACT (DATA-ONLY) ===")
+print(summary)
 
 # ----------------------------
-# SHAPE CHECK: do they look like the inspected one?
+# NONLINEARITY CHECK
 # ----------------------------
+x = summary["overload_run_length"].to_numpy()
+y_backlog = summary["mean_peak_backlog"].to_numpy()
+y_clear   = summary["mean_clear_time"].to_numpy()
 
-print("\n=== SHAPE CHECK ===")
+print("\nLinear fit (peak backlog):", np.polyfit(x, y_backlog, 1))
+print("Quadratic fit (peak backlog):", np.polyfit(x, y_backlog, 2))
 
-print("Fraction with duration ≤ 3 days:",
-      np.mean(episodes_df.duration <= 3))
+print("\nLinear fit (clear time):", np.polyfit(x, y_clear, 1))
+print("Quadratic fit (clear time):", np.polyfit(x, y_clear, 2))
 
-print("Fraction with half-life ≤ 2 days:",
-      np.mean(episodes_df.half_life <= 2))
+# Inspect events that never recovered:
 
-print("Fraction triggered by strong spike (≥2×):",
-      np.mean(episodes_df.demand_spike_ratio >= 2))
+
+# ============================================================
+# NEVER-RECOVER EVENTS: demand vs processed
+# (simple, local, fast)
+# ============================================================
+
+records = []
+
+for _, r in nev.iterrows():
+    port_df = df[df.portid == r.portid].reset_index(drop=True)
+    t0 = int(r.start)
+
+    if t0 <= 0 or t0 >= len(port_df):
+        continue
+
+    records.append({
+        "when": "day_before",
+        "demand": port_df.loc[t0 - 1, "demand"],
+        "processed": port_df.loc[t0 - 1, "processed"],
+    })
+
+    records.append({
+        "when": "overload_day",
+        "demand": port_df.loc[t0, "demand"],
+        "processed": port_df.loc[t0, "processed"],
+    })
+
+simple_df = pd.DataFrame(records)
+
+summary = (
+    simple_df
+    .groupby("when")
+    .agg(
+        demand_median=("demand", "median"),
+        processed_median=("processed", "median"),
+        demand_mean=("demand", "mean"),
+        processed_mean=("processed", "mean"),
+        count=("demand", "count"),
+    )
+)
+
+print("\n=== NEVER-RECOVER: DEMAND vs PROCESSED ===")
+print(summary)
+
+print("\n=== NEVER-RECOVER: DEMAND / PROCESSED RATIO ===")
+print(
+    (summary["demand_median"] / summary["processed_median"])
+)
+
+
+# ============================================================
+# NEVER-RECOVER EVENTS: demand vs processed (MINIMAL)
+# ============================================================
+
+rows = []
+
+for _, r in nev.iterrows():
+    port_df = df[df.portid == r.portid].reset_index(drop=True)
+    t = int(r.start)
+
+    if t < 0 or t >= len(port_df):
+        continue
+
+    rows.append({
+        "demand": port_df.loc[t, "demand"] * DEMAND_UNIT,
+        "processed": port_df.loc[t, "processed"],
+        "gap": port_df.loc[t, "demand"] - port_df.loc[t, "processed"],
+        "ratio": port_df.loc[t, "demand"] / max(port_df.loc[t, "processed"], 1e-9),
+    })
+
+never_event_df = pd.DataFrame(rows)
+
+print("\n=== NEVER-RECOVER EVENT DAY STATS ===")
+print(never_event_df.describe(percentiles=[0.5, 0.9, 0.95]))

@@ -12,7 +12,7 @@ rng = np.random.default_rng(seed=42)
 load_dotenv()
 
 DATA_PATH = os.getenv('DATA_PATH')
-LATENCY_PORT_FRACTION = 0.1   # e.g. 10% of ports
+LATENCY_PORT_FRACTION = 0.4   # e.g. 10% of ports
 
 def subsample_ports(df, fraction, rng):
     ports = df["portid"].unique()

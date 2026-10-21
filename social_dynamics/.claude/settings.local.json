@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:the-blacklist.fandom.com)",
+      "Bash(python:*)",
+      "Bash(tree:*)"
+    ]
+  }
+}

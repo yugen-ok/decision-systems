@@ -3,16 +3,12 @@ Core difference from logisticsimple:
 
 C_{t+1} doesn't go down by D_t. rather, C_t is just a limiter of how much of D_t can be processed today and how much goes to backlog
 
-
-Best config so far:
-
-delay = 4
-inventory_horizon = 8
-alpha = 0.1
-gamma = 0.047863
-clearance_factor = 12624.299878
-score = 0.708072
-
+delay                6.000000
+inventory_horizon    8.000000
+alpha                0.100000
+gamma                0.010000
+clearance_factor     1.000000
+score                0.268388
 """
 
 import os
@@ -57,13 +53,12 @@ HORIZONS = [4, 8]
 ALPHAS = np.logspace(-3, -1, 6)
 GAMMAS = np.logspace(-2, -0.3, 6)
 
-tpc = (train_df.loc[train_df["demand"] > 0, "processed"] /
-       train_df.loc[train_df["demand"] > 0, "demand"]).clip(lower=0)
+DEMAND_UNIT = (
+    train_df.loc[train_df["demand"] > 0, "processed"]
+    / train_df.loc[train_df["demand"] > 0, "demand"]
+).median()
 
-base = tpc.quantile([0.50, 0.75, 0.85, 0.90, 0.95, 0.97, 0.99]).to_numpy()
-
-CLEARANCE_FACTORS = base[[1, 3, 5]]  # pick 3 quantiles
-
+CLEARANCE_FACTORS = [0.8, 1.0, 1.2, 1.5, 2.0]
 
 
 
@@ -105,7 +100,7 @@ def per_port_scores_for_config(
         mean_processed = port_df["processed"].mean()
         init_inventory = (delay + horizon) * mean_processed
 
-        inv_sys = CapacitySystem(
+        cap_sys = CapacitySystem(
             delay=delay,
             init_inventory=init_inventory,
             inventory_horizon=horizon,
@@ -116,15 +111,15 @@ def per_port_scores_for_config(
 
         # warmup
         for r in port_df.iloc[:K].itertuples():
-            demand_tons = r.demand * clearance_factor
-            inv_sys.step(demand=demand_tons, processed=r.processed)
+            demand_tons = r.demand * DEMAND_UNIT
+            cap_sys.step(demand=demand_tons, processed=r.processed)
 
         # predict
         y_true = []
         y_pred = []
         for r in port_df.iloc[K:].itertuples():
-            demand_tons = r.demand * clearance_factor
-            y_pred.append(inv_sys.step(demand=demand_tons))
+            demand_tons = r.demand * DEMAND_UNIT
+            y_pred.append(cap_sys.step(demand=demand_tons))
             y_true.append(r.processed)
 
         score = score_smape_01(y_true, y_pred)
@@ -145,7 +140,7 @@ combs = list(itertools.product(
 
 combs = random.sample(combs, 50)
 
-for delay, horizon, alpha, gamma, clearance_factor in combs:
+for comb_idx, (delay, horizon, alpha, gamma, clearance_factor) in enmuerate(combs):
     port_scores = []
     total_abs_error = 0.0
     total_true = 0.0
@@ -161,7 +156,7 @@ for delay, horizon, alpha, gamma, clearance_factor in combs:
         mean_processed = port_df["processed"].mean()
         init_inventory = (delay + horizon) * mean_processed
 
-        inv_sys = CapacitySystem(
+        cap_sys = CapacitySystem(
             delay=delay,
             init_inventory=init_inventory,
             inventory_horizon=horizon,
@@ -171,14 +166,14 @@ for delay, horizon, alpha, gamma, clearance_factor in combs:
         )
 
         for r in port_df.iloc[:K].itertuples():
-            demand_tons = r.demand * clearance_factor
-            inv_sys.step(demand=demand_tons, processed=r.processed)
+            demand_tons = r.demand * DEMAND_UNIT
+            cap_sys.step(demand=demand_tons, processed=r.processed)
 
         y_true = []
         y_pred = []
         for r in port_df.iloc[K:].itertuples():
-            demand_tons = r.demand * clearance_factor
-            pred = inv_sys.step(demand=demand_tons)  # processed=None → predicted
+            demand_tons = r.demand * DEMAND_UNIT
+            pred = cap_sys.step(demand=demand_tons)  # processed=None → predicted
             y_pred.append(pred)
             y_true.append(r.processed)
 
@@ -205,6 +200,7 @@ for delay, horizon, alpha, gamma, clearance_factor in combs:
     results.append(result)
 
     print(
+        f"comb #{comb_idx}: "
         f"delay={delay:2d} | "
         f"horizon={horizon:2d} | "
         f"alpha={alpha:.4f} | "
@@ -219,7 +215,7 @@ for delay, horizon, alpha, gamma, clearance_factor in combs:
 # --------------------------------------------------
 
 results_df = pd.DataFrame(results).sort_values("score")
-results_df.to_csv(OUTPUT_DIR / "grid_results.csv", index=False)
+# results_df.to_csv(OUTPUT_DIR / "grid_results.csv", index=False)
 
 best = results_df.iloc[-1]
 
@@ -232,11 +228,11 @@ print(results_df.score.describe(percentiles=[0.9, 0.95, 0.99]))
 
 # p-value
 p = np.mean(results_df.score >= best.score)
-print(p)
+print("p-value:", p)
 
 # Effect size
 effect = best.score - results_df.score.mean()
-print(effect)
+print("effect size:", effect)
 
 # Robustness
 

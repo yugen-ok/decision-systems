@@ -60,6 +60,8 @@ class InventorySystem:
                 + self.inventory_horizon * self.demand_hat
         )
 
+
+
         # --- inventory position BEFORE ordering ---
         inventory_position = (
                 self.inventory

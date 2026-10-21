@@ -1,0 +1,33 @@
+[
+  {
+    "id": 2,
+    "name": "Weak Coupling",
+    "time": 1,
+    "episode": 0.019011406844106467,
+    "details": {
+      "domain_coupling_ratio": {
+        "satisfied": true,
+        "value": 1.0289791515513926,
+        "threshold": 1.1
+      }
+    }
+  },
+  {
+    "id": 1,
+    "name": "Non-Local Paths",
+    "time": 2,
+    "episode": 0.038022813688212934,
+    "details": {
+      "low_alignment": {
+        "satisfied": true,
+        "value": 0.05908057137595866,
+        "threshold": 0.3
+      },
+      "positive_progress": {
+        "satisfied": true,
+        "value": 0.0010597246577026685,
+        "threshold": 0.0
+      }
+    }
+  }
+]
